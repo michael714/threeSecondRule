@@ -1,0 +1,71 @@
+---
+description: threeSecondRule3D — project context, architecture, and conventions from development so far
+alwaysApply: true
+---
+
+# threeSecondRule3D (Godot 4.7)
+
+First-person 3D driving game: get to work (10 miles) while practicing the **3-second following rule**. Main scene: `res://scenes/main.tscn`.
+
+## Architecture
+
+| Script | Role |
+|--------|------|
+| `scripts/game_manager.gd` | Win/lose, HUD updates, following-time display, restart on Enter |
+| `scripts/player_vehicle.gd` | Speed, lane snap, movement along +Z, crash signal |
+| `scripts/traffic_manager.gd` | Spawn/despawn NPC traffic, car-to-car spacing, player collision, `get_following_seconds()` |
+| `scripts/traffic_car.gd` | NPC bus movement, loads/fits `assets/vw_bus.glb`, exposes `get_rear_z()` / `get_front_z()` |
+| `scripts/road_manager.gd` | Recycled road segments |
+| `scripts/dashboard_hud.gd` | In-cockpit LED displays (MPH, miles to work, follow seconds) |
+
+Traffic scene: `scenes/traffic_car.tscn` (root + script only; model spawned at runtime).
+
+## Controls (`project.godot` input actions)
+
+- **Up / Down** — accelerate / decelerate (hold; ramps over time)
+- **Space** — brake (hold; strong ramp)
+- **A / D or Left / Right arrows** — snap to adjacent lane (not continuous strafe)
+
+## Lane & coordinate conventions
+
+- Road forward is **+Z**. Lanes at `x = -1.85` (left) and `x = 1.85` (right).
+- Camera is X-flipped, so `lane_left` action sets `LANE_RIGHT_X` and `lane_right` sets `LANE_LEFT_X` in `player_vehicle.gd` — **do not swap back** without checking in-game feel.
+- Lane changes use `move_toward` to `target_lane_x` on key press (`is_action_just_pressed`).
+
+## Traffic & 3D assets
+
+- NPC vehicle model: **`res://assets/vw_bus.glb`** (replaced earlier `vw_bus.fbx`). Prefer **glTF/GLB** for new vehicle assets.
+- `traffic_car.gd` loads the GLB at runtime, scales to `TARGET_LENGTH` (4.5 m), centers on road, caches bumper offsets from mesh AABB.
+- Default `model_rotation_degrees` is `Vector3.ZERO` (was 180° before orientation fix).
+- `@export model_extra_scale` for manual tuning in the inspector.
+
+### Sketchfab / vw_bus.glb caveats
+
+- Export has **messy bounds** (e.g. huge internal dimensions, generic `Object_*` names, `steel2` / `Rubber_Rough222` materials). `_estimate_vehicle_length()` rejects outlier axes (`MAX_MESH_AXIS`, 8× ratio rule).
+- **Do not use fixed `CAR_LENGTH` offsets** for gap math — use `_rear_z_offset` / `_front_z_offset` from fitted mesh bounds.
+- **Wheel spin was attempted and removed.** Rims were separate meshes without proper hub pivots; spinning looked wrong. Do **not** re-add rim rotation unless a new model has dedicated wheel nodes/bones. User plans to source a better model.
+
+### Traffic spacing & HUD following time
+
+- Gaps measured **bumper to bumper**: `car.get_rear_z() - player.get_front_z()` (`get_front_z()` = player `z + 1.8`).
+- `SPAWN_MIN_AHEAD = 60` (~3 s at cruise) aligns with game theme; `MIN_CAR_GAP = 10`, `LANE_SPAWN_SPACING = 22`.
+- `_enforce_car_spacing()` slows cars that close on same-lane traffic.
+- HUD follow seconds: green ≥ 3 s, yellow ≥ 1.5 s, red below; shows `--` when no car in lane (`≥ 90`).
+
+## GDScript conventions (this project)
+
+- Use **explicit `float` types** when inference fails, e.g. `var world_z: float = _lane_spawn_z[lane_x]` and `var gap: float = ...` on `Node3D` with script methods.
+- Defer model fitting: `call_deferred("_fit_model_to_road", model)` after adding the GLB child.
+- Keep traffic logic in `traffic_manager.gd`; avoid duplicating lane constants — they must stay in sync across `player_vehicle`, `traffic_manager`, and `traffic_car`.
+
+## Editor / tooling
+
+- **godot_ai** MCP plugin enabled (`addons/godot_ai/`). Large assets may need headless import: `Godot --headless --import --path <project>`.
+- Do not commit secrets. Avoid editing `addons/godot_ai/` unless fixing the plugin itself.
+
+## When changing vehicles
+
+1. Drop GLB in `assets/`, let Godot import, update `BUS_MODEL_PATH` if filename changes.
+2. Verify orientation via `model_rotation_degrees` (likely 0 or 180 on Y).
+3. Re-check HUD follow time and collision gaps after any model swap — visual position must match `_cache_extent_offsets()`.
+4. For animated wheels later: require separate wheel nodes with pivots at hub centers, or a rigged model.

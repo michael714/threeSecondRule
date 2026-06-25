@@ -1,0 +1,11 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Editor / local tooling
+.import/
+
+# Non-game downloads dropped in assets/
+assets/*.zip
+assets/*.pdf
+assets/*.xlsx

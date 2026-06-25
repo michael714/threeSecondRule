@@ -1,0 +1,5 @@
+[gd_scene format=3 uid="uid://cnxdkitn7oanr"]
+
+[ext_resource type="PackedScene" uid="uid://cur4bvlhu03tq" path="res://assets/vw_bus.glb" id="1_r57si"]
+
+[node name="Sketchfab_Scene" unique_id=836960108 instance=ExtResource("1_r57si")]
