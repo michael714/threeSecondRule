@@ -8,6 +8,10 @@ signal distance_traveled_changed(miles: float)
 const MPH_TO_MS := 0.44704
 const MS_TO_MPH := 2.23694
 const MIN_SPEED_MPH := 0.0
+const CRUISE_MIN_MPH := 40.0
+const AUTO_CATCHUP_MPH := 14.0
+const MAX_FOLLOW_SECONDS := 6.0
+const NO_LEAD_FOLLOW_SECONDS := 90.0
 const MAX_SPEED_MPH := 120.0
 
 const BASE_ACCEL_MPH := 8.0
@@ -21,6 +25,8 @@ const LANE_LEFT_X := -1.85
 const LANE_RIGHT_X := 1.85
 const LANE_CHANGE_SPEED := 9.0
 
+@export var traffic_path: NodePath
+
 var speed_mph: float = 45.0
 var distance_meters: float = 0.0
 var is_crashed: bool = false
@@ -29,6 +35,12 @@ var target_lane_x: float = LANE_RIGHT_X
 var _accel_hold: float = 0.0
 var _decel_hold: float = 0.0
 var _brake_hold: float = 0.0
+var _traffic: Node3D
+
+
+func _ready() -> void:
+	if traffic_path:
+		_traffic = get_node(traffic_path)
 
 
 func _physics_process(delta: float) -> void:
@@ -71,11 +83,34 @@ func _update_speed(delta: float) -> void:
 		_accel_hold = 0.0
 		_brake_hold = 0.0
 		var decel_rate := BASE_DECEL_MPH + _decel_hold * DECEL_RAMP_MPH
-		speed_mph = maxf(MIN_SPEED_MPH, speed_mph - decel_rate * delta)
+		speed_mph = maxf(CRUISE_MIN_MPH, speed_mph - decel_rate * delta)
 	else:
 		_accel_hold = 0.0
 		_decel_hold = 0.0
 		_brake_hold = 0.0
+		if _apply_traffic_cruise(delta):
+			return
+		if speed_mph < CRUISE_MIN_MPH:
+			speed_mph = minf(CRUISE_MIN_MPH, speed_mph + AUTO_CATCHUP_MPH * delta)
+
+
+func _apply_traffic_cruise(delta: float) -> bool:
+	if _traffic == null or not _traffic.has_method("get_following_seconds"):
+		return false
+	if not _traffic.has_method("get_closest_ahead"):
+		return false
+
+	var follow_sec: float = _traffic.get_following_seconds(speed_mph)
+	if follow_sec >= NO_LEAD_FOLLOW_SECONDS or follow_sec <= MAX_FOLLOW_SECONDS:
+		return false
+
+	var ahead: Node3D = _traffic.get_closest_ahead()
+	if ahead == null:
+		return false
+
+	var chase_mph: float = clampf(ahead.speed_mph, CRUISE_MIN_MPH, MAX_SPEED_MPH)
+	speed_mph = move_toward(speed_mph, chase_mph, AUTO_CATCHUP_MPH * delta)
+	return true
 
 
 func _apply_movement(delta: float) -> void:

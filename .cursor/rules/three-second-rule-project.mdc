@@ -5,20 +5,23 @@ alwaysApply: true
 
 # threeSecondRule3D (Godot 4.7)
 
-First-person 3D driving game: get to work (10 miles) while practicing the **3-second following rule**. Main scene: `res://scenes/main.tscn`.
+First-person 3D driving game: get to work (**3 miles**) while practicing the **3-second following rule**. Main scene: `res://scenes/main.tscn`.
 
 ## Architecture
 
 | Script | Role |
 |--------|------|
 | `scripts/game_manager.gd` | Win/lose, HUD updates, following-time display, restart on Enter |
-| `scripts/player_vehicle.gd` | Speed, lane snap, movement along +Z, crash signal |
-| `scripts/traffic_manager.gd` | Spawn/despawn NPC traffic, car-to-car spacing, player collision, `get_following_seconds()` |
+| `scripts/player_vehicle.gd` | Speed, lane snap, movement along +Z, traffic-aware coasting catch-up, crash signal |
+| `scripts/traffic_manager.gd` | Spawn/despawn NPC traffic, spacing, player collision, `get_following_seconds()`, lead-car fallback |
 | `scripts/traffic_car.gd` | NPC bus movement, loads/fits `assets/vw_bus.glb`, exposes `get_rear_z()` / `get_front_z()` |
 | `scripts/road_manager.gd` | Recycled road segments |
-| `scripts/dashboard_hud.gd` | In-cockpit LED displays (MPH, miles to work, follow seconds) |
+| `scripts/dashboard_hud.gd` | In-cockpit SubViewport readouts (Digital-7 TTF, plain labels) |
+| `scripts/vehicle_audio.gd` | Engine loop + optional brake/crash; stops engine on crash |
 
 Traffic scene: `scenes/traffic_car.tscn` (root + script only; model spawned at runtime).
+
+Engine audio node: `World/Player/VehicleAudio/EngineLoop` (`AudioStreamPlayer` in `main.tscn`, stream `res://assets/audio/cruising.wav`).
 
 ## Controls (`project.godot` input actions)
 
@@ -34,33 +37,70 @@ Traffic scene: `scenes/traffic_car.tscn` (root + script only; model spawned at r
 
 ## Traffic & 3D assets
 
-- NPC vehicle model: **`res://assets/vw_bus.glb`** (replaced earlier `vw_bus.fbx`). Prefer **glTF/GLB** for new vehicle assets.
+- NPC vehicle model: **`res://assets/vw_bus.glb`**. Prefer **glTF/GLB** for new vehicle assets.
 - `traffic_car.gd` loads the GLB at runtime, scales to `TARGET_LENGTH` (4.5 m), centers on road, caches bumper offsets from mesh AABB.
-- Default `model_rotation_degrees` is `Vector3.ZERO` (was 180° before orientation fix).
+- Default `model_rotation_degrees` is `Vector3.ZERO`.
 - `@export model_extra_scale` for manual tuning in the inspector.
 
 ### Sketchfab / vw_bus.glb caveats
 
-- Export has **messy bounds** (e.g. huge internal dimensions, generic `Object_*` names, `steel2` / `Rubber_Rough222` materials). `_estimate_vehicle_length()` rejects outlier axes (`MAX_MESH_AXIS`, 8× ratio rule).
+- Export has **messy bounds** (e.g. huge internal dimensions, generic `Object_*` names). `_estimate_vehicle_length()` rejects outlier axes (`MAX_MESH_AXIS`, 8× ratio rule).
 - **Do not use fixed `CAR_LENGTH` offsets** for gap math — use `_rear_z_offset` / `_front_z_offset` from fitted mesh bounds.
-- **Wheel spin was attempted and removed.** Rims were separate meshes without proper hub pivots; spinning looked wrong. Do **not** re-add rim rotation unless a new model has dedicated wheel nodes/bones. User plans to source a better model.
+- **Wheel spin was attempted and removed.** Do **not** re-add rim rotation unless a new model has dedicated wheel nodes/bones.
 
-### Traffic spacing & HUD following time
+### Following time (3-second rule)
 
-- Gaps measured **bumper to bumper**: `car.get_rear_z() - player.get_front_z()` (`get_front_z()` = player `z + 1.8`).
-- `SPAWN_MIN_AHEAD = 60` (~3 s at cruise) aligns with game theme; `MIN_CAR_GAP = 10`, `LANE_SPAWN_SPACING = 22`.
-- `_enforce_car_spacing()` slows cars that close on same-lane traffic.
-- HUD follow seconds: green ≥ 3 s, yellow ≥ 1.5 s, red below; shows `--` when no car in lane (`≥ 90`).
+- Formula: **`gap / player_speed`** (time headway at the driver's speed). **Not** closing speed / speed difference.
+- Gap is **bumper to bumper**: `lead.get_rear_z() - player.get_front_z()` (`get_front_z()` = player `z + 1.8`).
+- HUD shows **`--`** when no car in lane (`get_following_seconds()` ≥ 90).
+
+### Traffic spacing & catch-up (6-second ceiling)
+
+Game keeps the player in the pack; the driver owns spacing **at or below 6 seconds**.
+
+| Constant | Value | Role |
+|----------|-------|------|
+| `MAX_FOLLOW_SECONDS` | **6.0** | Hard ceiling — game intervenes above this |
+| `MIN_CAR_GAP` | 10 m | NPC car-to-car spacing |
+| `LANE_SPAWN_SPACING` | 22 m | Spawn spacing per lane |
+| `SPAWN_MIN_AHEAD` | 60 m | Initial spawn distance ahead |
+
+**Player (`player_vehicle.gd`)** — when coasting (no accel/decel/brake): if follow time **> 6 s**, ramp speed toward the lead car's mph (`AUTO_CATCHUP_MPH`); if below **40 mph** with no traffic chase, floor at `CRUISE_MIN_MPH`.
+
+**Traffic (`traffic_manager.gd`)** — fallback if gap **> 6 s** at current player speed: teleport/spawn lead car to **6 s** (`CATCHUP_COOLDOWN_SEC = 4`). Requires `@export traffic_path` on Player → TrafficManager.
+
+## Dashboard HUD (`dashboard_hud.gd`)
+
+Plain **Digital-7 TTF** (`res://digits/digital-7.regular.ttf`) — **no** LED sheets, outlines, glow, or `FontDigitDisplay`/`LedDisplay`.
+
+| Readout | Value format | Captions |
+|---------|--------------|----------|
+| Miles to destination | `%.1f` | Miles to / Destination |
+| MPH | integer | MPH |
+| Following time | `%.1f` or `--` | Following / Time |
+
+- Value font **72 px**; caption font **16 px** (`COLOR_CAPTION`).
+- Following colors: green ≥ 3 s, yellow ≥ 1.5 s, red below.
+
+## Audio (`vehicle_audio.gd` + `main.tscn`)
+
+- Engine: **`res://assets/audio/cruising.wav`** on scene node `EngineLoop` (`autoplay`, `volume_db ≈ 10`).
+- **Do not `duplicate()` `AudioStreamWAV`** for the engine — breaks playback after ~0.5 s in Godot 4.7. Assign/import stream directly; use `finished` → `play()` if loop import is insufficient.
+- Import: `edit/normalize=false`, `compress/mode=0` (PCM), `edit/loop_mode=1` preferred.
+- No pitch or speed-based volume yet (user may add later). Brake/crash paths optional (`brake.ogg`, `crash.ogg`).
 
 ## GDScript conventions (this project)
 
-- Use **explicit `float` types** when inference fails, e.g. `var world_z: float = _lane_spawn_z[lane_x]` and `var gap: float = ...` on `Node3D` with script methods.
+- Use **explicit `float` types** when inference fails, e.g. `var world_z: float = _lane_spawn_z[lane_x]`.
 - Defer model fitting: `call_deferred("_fit_model_to_road", model)` after adding the GLB child.
-- Keep traffic logic in `traffic_manager.gd`; avoid duplicating lane constants — they must stay in sync across `player_vehicle`, `traffic_manager`, and `traffic_car`.
+- Keep traffic logic in `traffic_manager.gd`; lane constants must stay in sync across `player_vehicle`, `traffic_manager`, and `traffic_car`.
+- `MAX_FOLLOW_SECONDS` is duplicated in `player_vehicle.gd` and `traffic_manager.gd` — keep both in sync.
 
 ## Editor / tooling
 
-- **godot_ai** MCP plugin enabled (`addons/godot_ai/`). Large assets may need headless import: `Godot --headless --import --path <project>`.
+- **godot_ai** MCP plugin enabled (`addons/godot_ai/`). Requires **`uv`** on the system (`brew install uv` on macOS). Do **not** use the dock **Install uv** button if it hangs — install in Terminal instead.
+- **Cursor MCP**: `~/.cursor/mcp.json` needs a `godot-ai` entry (Configure in Godot AI dock, or `"url": "http://127.0.0.1:8000/mcp"`). Godot must be open with server connected; refresh MCP in Cursor after Mac sleep.
+- Large assets: headless import — `Godot --headless --import --path <project>`.
 - Do not commit secrets. Avoid editing `addons/godot_ai/` unless fixing the plugin itself.
 
 ## When changing vehicles

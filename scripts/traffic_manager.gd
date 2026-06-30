@@ -14,11 +14,16 @@ const CRASH_GAP := 2.8
 const LANE_MATCH_X := 1.2
 const MIN_CAR_GAP := 10.0
 const LANE_SPAWN_SPACING := 22.0
+## Hard ceiling: game intervenes above this; driver owns spacing at or below it.
+const MAX_FOLLOW_SECONDS := 6.0
+const CATCHUP_COOLDOWN_SEC := 4.0
+const APPROX_CAR_HALF_LENGTH := 2.25
 
 @export var player_path: NodePath
 
 var _player: Node3D
 var _cars: Array[Node3D] = []
+var _catchup_cooldown: float = 0.0
 var _lane_spawn_z: Dictionary = {
 	LANE_LEFT_X: 0.0,
 	LANE_RIGHT_X: 0.0,
@@ -44,10 +49,12 @@ func _spawn_initial_traffic() -> void:
 		_lane_spawn_z[lane_x] += randf_range(LANE_SPAWN_SPACING, LANE_SPAWN_SPACING + 8.0)
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if _player == null:
 		return
+	_catchup_cooldown = maxf(0.0, _catchup_cooldown - delta)
 	_enforce_car_spacing()
+	_enforce_player_lead_car()
 	_cleanup_cars()
 	_try_spawn()
 	_check_collisions()
@@ -134,6 +141,49 @@ func _cleanup_cars() -> void:
 			car.queue_free()
 			_cars.remove_at(i)
 		i -= 1
+
+
+func _enforce_player_lead_car() -> void:
+	if _catchup_cooldown > 0.0:
+		return
+
+	var player_speed_mph: float = _player.speed_mph
+	if player_speed_mph < 5.0:
+		return
+
+	var player_speed_ms: float = player_speed_mph * 0.44704
+	var max_gap_meters: float = player_speed_ms * MAX_FOLLOW_SECONDS
+	var player_front_z: float = _player_front_z()
+	var lane_x: float = _player_lane_x()
+
+	var ahead := get_closest_ahead()
+	if ahead != null:
+		var gap: float = ahead.get_rear_z() - player_front_z
+		if gap <= max_gap_meters:
+			return
+		var rear_offset: float = ahead.get_rear_z() - ahead.global_position.z
+		ahead.global_position.z = player_front_z + max_gap_meters - rear_offset
+		ahead.speed_mph = clampf(player_speed_mph * randf_range(0.92, 1.02), 35.0, 75.0)
+		_catchup_cooldown = CATCHUP_COOLDOWN_SEC
+		return
+
+	var spawn_z: float = player_front_z + max_gap_meters + APPROX_CAR_HALF_LENGTH
+	if not _lane_clear_at(lane_x, spawn_z):
+		return
+	var car: Node3D = TrafficCarScene.instantiate()
+	car.lane_x = lane_x
+	car.position = Vector3(lane_x, 0.0, spawn_z)
+	car.speed_mph = clampf(player_speed_mph * randf_range(0.95, 1.05), 35.0, 75.0)
+	add_child(car)
+	_cars.append(car)
+	_catchup_cooldown = CATCHUP_COOLDOWN_SEC
+
+
+func _player_lane_x() -> float:
+	var player_x: float = _player.global_position.x
+	if absf(player_x - LANE_LEFT_X) <= absf(player_x - LANE_RIGHT_X):
+		return LANE_LEFT_X
+	return LANE_RIGHT_X
 
 
 func _check_collisions() -> void:

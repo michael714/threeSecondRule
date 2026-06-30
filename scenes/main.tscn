@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3 uid="uid://main_game_scene"]
+[gd_scene load_steps=16 format=3 uid="uid://main_game_scene"]
 
 [ext_resource type="Script" path="res://scripts/game_manager.gd" id="1_gm"]
 [ext_resource type="Script" path="res://scripts/player_vehicle.gd" id="2_player"]
@@ -6,6 +6,8 @@
 [ext_resource type="Script" path="res://scripts/traffic_manager.gd" id="4_traffic"]
 [ext_resource type="Script" path="res://scripts/dashboard.gd" id="5_dash"]
 [ext_resource type="Script" path="res://scripts/dashboard_hud.gd" id="6_hud"]
+[ext_resource type="Script" path="res://scripts/vehicle_audio.gd" id="7_audio"]
+[ext_resource type="AudioStream" path="res://assets/audio/cruising.wav" id="8_cruise"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_top_color = Color(0.45, 0.65, 0.95, 1)
@@ -71,6 +73,17 @@ shadow_enabled = true
 [node name="Player" type="Node3D" parent="World"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.85, 0, 0)
 script = ExtResource("2_player")
+traffic_path = NodePath("../TrafficManager")
+
+[node name="VehicleAudio" type="Node3D" parent="World/Player"]
+script = ExtResource("7_audio")
+player_path = NodePath("..")
+
+[node name="EngineLoop" type="AudioStreamPlayer" parent="World/Player/VehicleAudio"]
+stream = ExtResource("8_cruise")
+volume_db = 10.0
+autoplay = true
+bus = &"Master"
 
 [node name="Camera3D" type="Camera3D" parent="World/Player"]
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1.25, 0.15)

@@ -1,7 +1,7 @@
 extends Node
 ## Game state, HUD, win/lose for the late-to-work scenario.
 
-const GOAL_MILES := 10.0
+const GOAL_MILES := 3.0
 
 @export var player_path: NodePath
 @export var traffic_path: NodePath
